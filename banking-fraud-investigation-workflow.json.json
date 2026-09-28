@@ -1,0 +1,257 @@
+{
+  "name": "Banking Transaction Risk Investigation",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "5cb3bd0e-49d8-4ac4-b60f-f668d8ec73a7",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n    TRANSACTION_ID,\n    CUSTOMER_ID,\n    CUSTOMER_NAME,\n    AMOUNT,\n    CUSTOMER_CITY,\n    TRANSACTION_LOCATION,\n    CHANNEL,\n    DEVICE_ID,\n    RISK_SCORE,\n    RISK_LEVEL\nFROM BANK_AI_DB.TRANSACTIONS.RISK_ANALYSIS\nWHERE RISK_LEVEL = 'HIGH'\nORDER BY RISK_SCORE DESC;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.snowflake",
+      "typeVersion": 1.1,
+      "position": [
+        224,
+        0
+      ],
+      "id": "bf0f13ad-cb95-4a9d-bdae-9016af5c0e97",
+      "name": "Snowflake",
+      "credentials": {
+        "snowflake": {
+          "id": "aE2CiMUyNJEFRL6E",
+          "name": "Snowflake account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are a Banking Transaction Investigation Assistant.\n\nAnalyze the transaction data received from Snowflake.\n\nIdentify suspicious transactions and explain:\n1. Why the transaction was flagged as high risk.\n2. The risk indicators involved.\n3. The risk score and risk level.\n4. Provide a concise investigation summary.\n\nDo not invent any transaction details. Use only the data provided by Snowflake.\n\nTransaction data:\n{{ JSON.stringify($json) }}\n\nUse the Code Tool to independently validate the risk score and risk indicators before providing the final investigation summary.",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        448,
+        0
+      ],
+      "id": "7bf28a15-e825-4d9c-ab79-42fccd8695e2",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "description": "Calculate and validate banking transaction risk indicators. Use the transaction details provided by the AI Agent and return the calculated risk information for investigation.",
+        "jsCode": "const data = JSON.parse(query);\n\nconst riskScore = Number(data.RISK_SCORE || 0);\nconst riskLevel = data.RISK_LEVEL || \"UNKNOWN\";\n\nconst indicators = [];\n\nif (riskScore >= 30) {\n  indicators.push(\"High-value transaction\");\n}\n\nif (data.TRANSACTION_LOCATION !== data.CUSTOMER_CITY) {\n  indicators.push(\"Geographic mismatch\");\n}\n\nif (data.DEVICE_ID && data.DEVICE_ID !== \"D001\") {\n  indicators.push(\"Unusual device detected\");\n}\n\nreturn JSON.stringify({\n  transaction_id: data.TRANSACTION_ID,\n  risk_score: riskScore,\n  risk_level: riskLevel,\n  risk_indicators: indicators,\n  investigation_status: riskLevel === \"HIGH\"\n    ? \"Requires investigation\"\n    : \"No immediate investigation required\"\n});"
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.3,
+      "position": [
+        608,
+        208
+      ],
+      "id": "222b6ca7-d70c-4853-8b20-270b3bf78677",
+      "name": "Code Tool"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "95cb3a5d-7841-4d5e-9cac-e34de3aee7c3",
+              "leftValue": "={{ $('Snowflake').item.json.RISK_LEVEL }}",
+              "rightValue": "HIGH",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        816,
+        16
+      ],
+      "id": "ce2bd74f-6e90-4de2-bc6d-e3a331b453cd",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "sendTo": "jabarullah1112@gmail.com",
+        "subject": "High Risk Banking Transaction Alert",
+        "message": "=🚨 HIGH RISK TRANSACTION ALERT\n\n{{ $json.output }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1040,
+        16
+      ],
+      "id": "ae2308ba-2dd9-4fd8-a002-f912182353ce",
+      "name": "Send a message",
+      "webhookId": "26641889-c552-4aa8-8abb-ef9466f1b6b6",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "EZkGaW93KimxUrSi",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO BANK_AI_DB.TRANSACTIONS.INVESTIGATION_LOG\n(\n    TRANSACTION_ID,\n    CUSTOMER_ID,\n    CUSTOMER_NAME,\n    AMOUNT,\n    RISK_SCORE,\n    RISK_LEVEL,\n    AI_INVESTIGATION_SUMMARY,\n    ALERT_SENT\n)\nSELECT\n    '{{ $('Snowflake').item.json.TRANSACTION_ID }}',\n    '{{ $('Snowflake').item.json.CUSTOMER_ID }}',\n    '{{ $('Snowflake').item.json.CUSTOMER_NAME }}',\n    {{ $('Snowflake').item.json.AMOUNT }},\n    {{ $('Snowflake').item.json.RISK_SCORE }},\n    '{{ $('Snowflake').item.json.RISK_LEVEL }}',\n    '{{ $('AI Agent').item.json.output.replace(/'/g, \"''\") }}',\n    'YES';",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.snowflake",
+      "typeVersion": 1.1,
+      "position": [
+        1264,
+        16
+      ],
+      "id": "ada2b505-79cd-4084-9fe3-de0e844deab9",
+      "name": "Snowflake1",
+      "credentials": {
+        "snowflake": {
+          "id": "aE2CiMUyNJEFRL6E",
+          "name": "Snowflake account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        448,
+        304
+      ],
+      "id": "aadac7b0-4d47-4f15-a3b1-103339c6fffc",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": null,
+          "name": "",
+          "__aiGatewayManaged": true
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Snowflake",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Snowflake": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message": {
+      "main": [
+        [
+          {
+            "node": "Snowflake1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "2608093d-3ff6-4b36-a7fa-6e03d0bba676",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "1413d313663183debf2e83def5c56af4d69b004dd1d5917bd4b6f55bf2ec528c"
+  },
+  "nodeGroups": [],
+  "id": "MJVjPOyJJeVMHGiA",
+  "tags": []
+}
